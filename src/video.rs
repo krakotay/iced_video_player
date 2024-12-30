@@ -376,8 +376,8 @@ impl Video {
                         if !has_video {
                             // Simulate frame upload when there is no video stream
                             upload_frame_ref.swap(true, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_secs_f64(1.0 / framerate));
                         }
-                        std::thread::sleep(Duration::from_millis(250));
                     }
                     Err(err) => {
                         log::error!("error pulling frame: {err}");
