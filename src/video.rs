@@ -252,16 +252,21 @@ impl Video {
 
         // extract resolution and framerate
         // TODO(jazzfool): maybe we want to extract some other information too?
-        let caps = pad.current_caps().ok_or(Error::Caps)?;
-        let s = caps.structure(0).ok_or(Error::Caps)?;
-        let width = s.get::<i32>("width").map_err(|_| Error::Caps)?;
-        let height = s.get::<i32>("height").map_err(|_| Error::Caps)?;
-        // resolution should be mod4
-        let width = ((width + 4 - 1) / 4) * 4;
-        let framerate = s
-            .get::<gst::Fraction>("framerate")
-            .map_err(|_| Error::Caps)?;
-        let framerate = framerate.numer() as f64 / framerate.denom() as f64;
+        let (width, height, framerate, has_video) = if let Some(caps) = pad.current_caps() {
+            let s = caps.structure(0).ok_or(Error::Caps)?;
+            let width = s.get::<i32>("width").map_err(|_| Error::Caps)?;
+            let height = s.get::<i32>("height").map_err(|_| Error::Caps)?;
+            // resolution should be mod4
+            let width = ((width + 4 - 1) / 4) * 4;
+            let framerate = s
+                .get::<gst::Fraction>("framerate")
+                .map_err(|_| Error::Caps)?;
+            let framerate = framerate.numer() as f64 / framerate.denom() as f64;
+            (width, height, framerate, true)
+        } else {
+            log::warn!("Video caps not found, falling back to audio only");
+            (0, 0, 4.0, false)
+        };
 
         if framerate.is_nan()
             || framerate.is_infinite()
@@ -306,7 +311,7 @@ impl Video {
             let mut clear_subtitles_at = None;
 
             while alive_ref.load(Ordering::Acquire) {
-                if let Err(gst::FlowError::Error) = (|| -> Result<(), gst::FlowError> {
+                match (|| -> Result<(), gst::FlowError> {
                     let sample =
                         if pipeline_ref.state(gst::ClockTime::ZERO).1 != gst::State::Playing {
                             video_sink
@@ -366,7 +371,17 @@ impl Video {
 
                     Ok(())
                 })() {
-                    log::error!("error pulling frame");
+                    Ok(()) => {},
+                    Err(gst::FlowError::Eos) => {
+                        if !has_video {
+                            // Simulate frame upload when there is no video stream
+                            upload_frame_ref.swap(true, Ordering::SeqCst);
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    Err(err) => {
+                        log::error!("error pulling frame: {err}");
+                    }
                 }
             }
         });

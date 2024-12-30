@@ -142,6 +142,10 @@ impl VideoPipeline {
         (width, height): (u32, u32),
         frame: &[u8],
     ) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
         if let Entry::Vacant(entry) = self.videos.entry(video_id) {
             let texture_y = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("iced_video_player texture"),

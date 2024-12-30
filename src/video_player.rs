@@ -305,7 +305,12 @@ where
 
                 while let Some(msg) = inner
                     .bus
-                    .pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])
+                    .pop_filtered(&[
+                        gst::MessageType::Error,
+                        gst::MessageType::Element,
+                        gst::MessageType::Eos,
+                        gst::MessageType::Warning,
+                    ])
                 {
                     match msg.view() {
                         gst::MessageView::Error(err) => {
