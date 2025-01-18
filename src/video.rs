@@ -50,6 +50,7 @@ pub(crate) struct Internal {
     pub(crate) alive: Arc<AtomicBool>,
     pub(crate) worker: Option<std::thread::JoinHandle<()>>,
 
+    pub(crate) has_video: bool,
     pub(crate) width: i32,
     pub(crate) height: i32,
     pub(crate) framerate: f64,
@@ -394,6 +395,7 @@ impl Video {
             alive,
             worker: Some(worker),
 
+            has_video,
             width,
             height,
             framerate,
@@ -428,6 +430,10 @@ impl Video {
 
     pub(crate) fn get_mut(&mut self) -> impl DerefMut<Target = Internal> + '_ {
         self.0.get_mut().expect("lock")
+    }
+
+    pub fn has_video(&self) -> bool {
+        self.read().has_video
     }
 
     /// Get the size/resolution of the video as `(width, height)`.
