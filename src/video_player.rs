@@ -37,6 +37,7 @@ where
     on_subtitle_text: Option<Box<dyn Fn(Option<String>) -> Message + 'a>>,
     on_error: Option<Box<dyn Fn(glib::Error) -> Message + 'a>>,
     on_missing_plugin: Option<Box<dyn Fn(gst::Message) -> Message + 'a>>,
+    on_tags: Option<Box<dyn Fn(gst::TagList) -> Message + 'a>>,
     on_warning: Option<Box<dyn Fn(glib::Error) -> Message + 'a>>,
     _phantom: PhantomData<(Theme, Renderer)>,
 }
@@ -58,6 +59,7 @@ where
             on_subtitle_text: None,
             on_error: None,
             on_missing_plugin: None,
+            on_tags: None,
             on_warning: None,
             _phantom: Default::default(),
         }
@@ -138,6 +140,16 @@ where
     {
         VideoPlayer {
             on_missing_plugin: Some(Box::new(on_missing_plugin)),
+            ..self
+        }
+    }
+
+    pub fn on_tags<F>(self, on_tags: F) -> Self
+    where
+        F: 'a + Fn(gst::TagList) -> Message,
+    {
+        VideoPlayer {
+            on_tags: Some(Box::new(on_tags)),
             ..self
         }
     }
@@ -309,6 +321,7 @@ where
                         gst::MessageType::Error,
                         gst::MessageType::Element,
                         gst::MessageType::Eos,
+                        gst::MessageType::Tag,
                         gst::MessageType::Warning,
                     ])
                 {
@@ -334,6 +347,11 @@ where
                                 restart_stream = true;
                             } else {
                                 eos_pause = true;
+                            }
+                        }
+                        gst::MessageView::Tag(tag_msg) => {
+                            if let Some(ref on_tags) = self.on_tags {
+                                shell.publish(on_tags(tag_msg.tags()));
                             }
                         }
                         gst::MessageView::Warning(warn) => {
