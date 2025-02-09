@@ -1,8 +1,8 @@
 use crate::{gst, gst_pbutils, video::Video};
 use cosmic::iced::{
-    self, Element,
-    advanced::{self, Widget, graphics::core::event::Status, layout, widget},
-    mouse,
+    self,
+    advanced::{self, graphics::core::event::Status, layout, widget, Widget},
+    mouse, Element,
 };
 use gstreamer_app::prelude::*;
 use log::error;
@@ -41,6 +41,7 @@ where
     on_missing_plugin: Option<Box<dyn Fn(gst::Message) -> Message + 'a>>,
     on_tags: Option<Box<dyn Fn(gst::TagList) -> Message + 'a>>,
     on_warning: Option<Box<dyn Fn(glib::Error) -> Message + 'a>>,
+    id: Option<cosmic::widget::Id>,
     _phantom: PhantomData<(Theme, Renderer)>,
 }
 
@@ -65,7 +66,14 @@ where
             on_tags: None,
             on_warning: None,
             _phantom: Default::default(),
+            id: None,
         }
+    }
+
+    /// Sets the ID of the `VideoPlayer`.
+    pub fn id(mut self, id: cosmic::widget::Id) -> Self {
+        self.id = Some(id);
+        self
     }
 
     /// Sets the width of the `VideoPlayer` boundaries.
@@ -278,27 +286,34 @@ where
         #[cfg(not(feature = "wgpu"))]
         {
             if upload_frame {
-                let yuv_data_opt = match inner.frame.lock() {
-                    Ok(frame) => Some(frame.clone()),
-                    Err(_err) => None,
-                };
-                inner.handle_opt = if let Some(yuv_data) = yuv_data_opt {
-                    //TODO: convert on worker thread?
-                    let rgba_data = yuv_to_rgba(&yuv_data, inner.width as _, inner.height as _, 1);
-                    Some(advanced::image::Handle::from_pixels(
-                        inner.width as _,
-                        inner.height as _,
-                        rgba_data,
-                    ))
-                } else {
-                    None
-                };
+                let mut opt = None;
+                {
+                    let yuv_data_opt = match inner.frame.lock() {
+                        Ok(frame) => Some(frame),
+                        Err(_err) => None,
+                    };
+                    if let Some(yuv_data) = yuv_data_opt.as_ref().and_then(|d| d.readable()) {
+                        //TODO: convert on worker thread?
+                        let rgba_data =
+                            yuv_to_rgba(&yuv_data, inner.width as _, inner.height as _, 1);
+                        opt = Some(advanced::image::Handle::from_rgba(
+                            inner.width as _,
+                            inner.height as _,
+                            rgba_data,
+                        ))
+                    };
+                }
+                inner.handle_opt = opt;
             }
             if let Some(handle) = &inner.handle_opt {
-                renderer.draw(
+                use cosmic::iced::Radians;
+
+                renderer.draw_image(
                     handle.clone(),
                     advanced::image::FilterMethod::Nearest,
                     drawing_bounds,
+                    Radians(0.),
+                    1.0,
                     [0.0; 4],
                 );
             }
@@ -436,6 +451,14 @@ where
         } else {
             mouse::Interaction::default()
         }
+    }
+
+    fn set_id(&mut self, id: widget::Id) {
+        self.id = Some(id);
+    }
+
+    fn id(&self) -> Option<widget::Id> {
+        self.id.clone()
     }
 }
 

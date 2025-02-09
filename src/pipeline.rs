@@ -1,12 +1,14 @@
 use cosmic::iced;
 use cosmic::iced_wgpu::{self, primitive::Primitive, wgpu};
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{btree_map::Entry, BTreeMap},
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     },
 };
+
+use crate::video::Frame;
 
 #[repr(C)]
 struct Uniforms {
@@ -88,7 +90,7 @@ impl VideoPipeline {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
@@ -101,7 +103,7 @@ impl VideoPipeline {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: None,
@@ -189,6 +191,7 @@ impl VideoPipeline {
                 mip_level_count: None,
                 base_array_layer: 0,
                 array_layer_count: None,
+                usage: None,
             });
 
             let view_uv = texture_uv.create_view(&wgpu::TextureViewDescriptor {
@@ -200,6 +203,7 @@ impl VideoPipeline {
                 mip_level_count: None,
                 base_array_layer: 0,
                 array_layer_count: None,
+                usage: None,
             });
 
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -370,7 +374,7 @@ impl VideoPipeline {
 pub(crate) struct VideoPrimitive {
     video_id: u64,
     alive: Arc<AtomicBool>,
-    frame: Arc<Mutex<Vec<u8>>>,
+    frame: Arc<Mutex<Frame>>,
     size: (u32, u32),
     upload_frame: bool,
 }
@@ -379,7 +383,7 @@ impl VideoPrimitive {
     pub fn new(
         video_id: u64,
         alive: Arc<AtomicBool>,
-        frame: Arc<Mutex<Vec<u8>>>,
+        frame: Arc<Mutex<Frame>>,
         size: (u32, u32),
         upload_frame: bool,
     ) -> Self {
@@ -410,14 +414,16 @@ impl Primitive for VideoPrimitive {
         let pipeline = storage.get_mut::<VideoPipeline>().unwrap();
 
         if self.upload_frame {
-            pipeline.upload(
-                device,
-                queue,
-                self.video_id,
-                &self.alive,
-                self.size,
-                self.frame.lock().expect("lock frame mutex").as_slice(),
-            );
+            if let Some(readable) = self.frame.lock().expect("lock frame mutex").readable() {
+                pipeline.upload(
+                    device,
+                    queue,
+                    self.video_id,
+                    &self.alive,
+                    self.size,
+                    readable.as_slice(),
+                );
+            }
         }
 
         pipeline.prepare(queue, self.video_id, &bounds);
