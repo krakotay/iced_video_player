@@ -1,8 +1,8 @@
 use crate::Error;
+use cosmic::iced::widget::image as img;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_app::prelude::*;
-use cosmic::iced::widget::image as img;
 use std::num::NonZeroU8;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -372,7 +372,7 @@ impl Video {
 
                     Ok(())
                 })() {
-                    Ok(()) => {},
+                    Ok(()) => {}
                     Err(gst::FlowError::Eos) => {
                         if !has_video {
                             // Simulate frame upload when there is no video stream

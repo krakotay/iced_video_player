@@ -4,6 +4,7 @@ use cosmic::iced::{
     advanced::{self, graphics::core::event::Status, layout, widget, Widget},
     mouse, Element,
 };
+use gstreamer_app::prelude::*;
 use log::error;
 use std::{marker::PhantomData, sync::atomic::Ordering, time::Duration};
 use std::{sync::Arc, time::Instant};
@@ -32,6 +33,7 @@ where
     width: iced::Length,
     height: iced::Length,
     mouse_hidden: bool,
+    on_duration_changed: Option<Box<dyn Fn(Duration) -> Message + 'a>>,
     on_end_of_stream: Option<Message>,
     on_new_frame: Option<Message>,
     on_subtitle_text: Option<Box<dyn Fn(Option<String>) -> Message + 'a>>,
@@ -54,6 +56,7 @@ where
             width: iced::Length::Shrink,
             height: iced::Length::Shrink,
             mouse_hidden: false,
+            on_duration_changed: None,
             on_end_of_stream: None,
             on_new_frame: None,
             on_subtitle_text: None,
@@ -92,6 +95,16 @@ where
     pub fn mouse_hidden(self, mouse_hidden: bool) -> Self {
         VideoPlayer {
             mouse_hidden,
+            ..self
+        }
+    }
+
+    pub fn on_duration_changed<F>(self, on_duration_changed: F) -> Self
+    where
+        F: 'a + Fn(Duration) -> Message,
+    {
+        VideoPlayer {
+            on_duration_changed: Some(Box::new(on_duration_changed)),
             ..self
         }
     }
@@ -315,17 +328,27 @@ where
                 }
                 let mut eos_pause = false;
 
-                while let Some(msg) = inner
-                    .bus
-                    .pop_filtered(&[
-                        gst::MessageType::Error,
-                        gst::MessageType::Element,
-                        gst::MessageType::Eos,
-                        gst::MessageType::Tag,
-                        gst::MessageType::Warning,
-                    ])
-                {
+                while let Some(msg) = inner.bus.pop_filtered(&[
+                    gst::MessageType::DurationChanged,
+                    gst::MessageType::Error,
+                    gst::MessageType::Element,
+                    gst::MessageType::Eos,
+                    gst::MessageType::Tag,
+                    gst::MessageType::Warning,
+                ]) {
                     match msg.view() {
+                        gst::MessageView::DurationChanged(_) => {
+                            inner.duration = Duration::from_nanos(
+                                inner
+                                    .source
+                                    .query_duration::<gst::ClockTime>()
+                                    .map(|duration| duration.nseconds())
+                                    .unwrap_or(0),
+                            );
+                            if let Some(ref on_duration_changed) = self.on_duration_changed {
+                                shell.publish(on_duration_changed(inner.duration));
+                            }
+                        }
                         gst::MessageView::Error(err) => {
                             error!("bus returned an error: {err}");
                             if let Some(ref on_error) = self.on_error {
