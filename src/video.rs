@@ -204,7 +204,10 @@ impl Video {
     pub fn new(uri: &url::Url) -> Result<Self, Error> {
         gst::init()?;
 
-        let pipeline = format!("playbin uri=\"{}\" text-sink=\"appsink name=iced_text sync=true caps=text/x-raw\" video-sink=\"videoscale ! videoconvert ! appsink name=iced_video drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"", uri.as_str());
+        let pipeline = format!(
+            "playbin uri=\"{}\" text-sink=\"appsink name=iced_text sync=true caps=text/x-raw\" video-sink=\"videoscale ! videoconvert ! appsink name=iced_video drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"",
+            uri.as_str()
+        );
         let pipeline = gst::parse::launch(pipeline.as_ref())?
             .downcast::<gst::Pipeline>()
             .map_err(|_| Error::Cast)?;
@@ -582,11 +585,14 @@ impl Video {
                 .into_iter()
                 .map(|pos| {
                     inner.seek(pos, true)?;
+
                     inner.upload_frame.store(false, Ordering::SeqCst);
+
                     while !inner.upload_frame.load(Ordering::SeqCst) {
                         std::hint::spin_loop();
                     }
-                    Ok(img::Handle::from_pixels(
+
+                    Ok(img::Handle::from_rgba(
                         inner.width as u32 / downscale,
                         inner.height as u32 / downscale,
                         yuv_to_rgba(

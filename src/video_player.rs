@@ -1,8 +1,8 @@
 use crate::{gst, gst_pbutils, video::Video};
 use cosmic::iced::{
-    self,
-    advanced::{self, graphics::core::event::Status, layout, widget, Widget},
-    mouse, Element,
+    self, Element,
+    advanced::{self, Widget, graphics::core::event::Status, layout, widget},
+    mouse,
 };
 use gstreamer_app::prelude::*;
 use log::error;
@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Instant};
 #[cfg(feature = "wgpu")]
 use crate::pipeline::VideoPrimitive;
 #[cfg(feature = "wgpu")]
-use cosmic::iced_wgpu::primitive::pipeline::Renderer as PrimitiveRenderer;
+use cosmic::iced_wgpu::primitive::Renderer as PrimitiveRenderer;
 
 #[cfg(not(feature = "wgpu"))]
 use crate::video::yuv_to_rgba;
@@ -264,7 +264,7 @@ where
         }
 
         #[cfg(feature = "wgpu")]
-        renderer.draw_pipeline_primitive(
+        renderer.draw_primitive(
             drawing_bounds,
             VideoPrimitive::new(
                 inner.id,
@@ -318,7 +318,7 @@ where
     ) -> Status {
         let mut inner = self.video.write();
 
-        if let iced::Event::Window(_, iced::window::Event::RedrawRequested(_)) = event {
+        if let iced::Event::Window(iced::window::Event::RedrawRequested(_)) = event {
             if inner.restart_stream || (!inner.is_eos && !inner.paused()) {
                 let mut restart_stream = false;
                 if inner.restart_stream {
