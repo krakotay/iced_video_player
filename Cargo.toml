@@ -69,3 +69,18 @@ buildInputs = [
 rustc-args = ["--cfg", "docsrs"]
 rustdoc-args = ["--cfg", "docsrs"]
 targets = ["wasm32-unknown-unknown"]
+
+
+[patch.'https://github.com/pop-os/libcosmic']
+# libcosmic = { path = "../libcosmic" }
+# cosmic-config = { path = "../libcosmic/cosmic-config" }
+# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+libcosmic = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+cosmic-theme = { git = "https://github.com/pop-os/libcosmic//", branch = "iced-rebase" }
+
+[dev_dependencies]
+libcosmic = { git = "https://github.com/pop-os/libcosmic", branch = "iced-rebase", features = [
+    "wgpu",
+    "wayland",
+] }
