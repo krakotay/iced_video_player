@@ -1,8 +1,8 @@
 use crate::{gst, gst_pbutils, video::Video};
 use cosmic::iced::{
-    self, Element,
-    advanced::{self, Widget, layout, widget},
-    mouse,
+    self,
+    advanced::{self, graphics::core::event::Status, layout, widget, Widget},
+    mouse, Element,
 };
 use gstreamer_app::prelude::*;
 use log::error;
@@ -206,13 +206,6 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let (video_width, video_height) = self.video.size();
-        let inner = self.video.read();
-        // XXX must be done now in case draw is never called because music player is obscured.
-        // prevents constant relayouting for new frame messages
-        if !inner.has_video {
-            inner.relayout.store(false, Ordering::SeqCst);
-            inner.upload_frame.store(false, Ordering::SeqCst);
-        }
 
         // based on `Image::layout`
         let image_size = iced::Size::new(video_width as f32, video_height as f32);
@@ -268,7 +261,7 @@ where
         let drawing_bounds = iced::Rectangle::new(position, final_size);
 
         let upload_frame = inner.upload_frame.swap(false, Ordering::SeqCst);
-        inner.relayout.store(false, Ordering::SeqCst);
+        inner.redrawing.store(false, Ordering::SeqCst);
 
         if upload_frame {
             let last_frame_time = inner
@@ -420,11 +413,11 @@ where
                     inner.set_paused(true);
                 }
 
-                if !inner.relayout.load(Ordering::SeqCst)
+                if !inner.redrawing.load(Ordering::SeqCst)
                     && inner.upload_frame.load(Ordering::SeqCst)
                 {
                     if let Some(on_new_frame) = self.on_new_frame.clone() {
-                        inner.relayout.store(true, Ordering::SeqCst);
+                        inner.redrawing.store(true, Ordering::SeqCst);
                         shell.publish(on_new_frame);
                     }
                 }
