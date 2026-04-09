@@ -1,6 +1,6 @@
+use cosmic::iced::wgpu;
+use cosmic::iced::widget::shader::{Pipeline, Primitive, Viewport};
 use cosmic::iced::{self, Rectangle};
-use cosmic::iced_wgpu::graphics::Viewport;
-use cosmic::iced_wgpu::{self, primitive::Primitive, wgpu};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
     sync::{
@@ -372,7 +372,7 @@ impl VideoPipeline {
     }
 }
 
-impl iced_wgpu::primitive::Pipeline for VideoPipeline {
+impl Pipeline for VideoPipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self
     where
         Self: Sized,

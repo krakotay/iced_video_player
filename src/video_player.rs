@@ -1,7 +1,7 @@
 use crate::{gst, gst_pbutils, video::Video};
 use cosmic::iced::{
     self,
-    advanced::{self, graphics::core::event::Status, layout, widget, Widget},
+    advanced::{self, layout, widget, Widget},
     mouse, Element,
 };
 use gstreamer_app::prelude::*;
@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Instant};
 #[cfg(feature = "wgpu")]
 use crate::pipeline::VideoPrimitive;
 #[cfg(feature = "wgpu")]
-use cosmic::iced_wgpu::primitive::Renderer as PrimitiveRenderer;
+use iced_wgpu::primitive::Renderer as PrimitiveRenderer;
 
 #[cfg(not(feature = "wgpu"))]
 use crate::video::yuv_to_rgba;
