@@ -307,7 +307,7 @@ impl Video {
                 .unwrap_or(0),
         );
 
-        let sync_av = pipeline.has_property("av-offset", None);
+        let sync_av = pipeline.has_property("av-offset");
 
         // NV12 = 12bpp
         let frame = Arc::new(Mutex::new(Frame::new()));
