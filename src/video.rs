@@ -1,8 +1,8 @@
 use crate::Error;
+use cosmic::iced::widget::image as img;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_app::prelude::*;
-use iced::widget::image as img;
 use std::num::NonZeroU8;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -41,6 +41,47 @@ impl From<u64> for Position {
     }
 }
 
+fn is_valid_framerate(framerate: f64) -> bool {
+    framerate.is_finite() && framerate >= 0.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_framerate;
+
+    #[test]
+    fn variable_framerate_is_valid() {
+        assert!(is_valid_framerate(0.0));
+    }
+
+    #[test]
+    fn invalid_framerates_are_rejected() {
+        assert!(!is_valid_framerate(f64::NAN));
+        assert!(!is_valid_framerate(f64::INFINITY));
+        assert!(!is_valid_framerate(-1.0));
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Frame(gst::Sample);
+
+impl Frame {
+    pub fn new() -> Self {
+        Self(gst::Sample::builder().build())
+    }
+    pub fn store(&mut self, sample: gst::Sample) -> Option<()> {
+        if sample.buffer().is_some() {
+            self.0 = sample;
+            Some(())
+        } else {
+            None
+        }
+    }
+    pub fn readable(&self) -> Option<gst::BufferMap<gst::buffer::Readable>> {
+        self.0.buffer().map(|x| x.map_readable().ok()).flatten()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Internal {
     pub(crate) id: u64,
@@ -50,6 +91,7 @@ pub(crate) struct Internal {
     pub(crate) alive: Arc<AtomicBool>,
     pub(crate) worker: Option<std::thread::JoinHandle<()>>,
 
+    pub(crate) has_video: bool,
     pub(crate) width: i32,
     pub(crate) height: i32,
     pub(crate) framerate: f64,
@@ -57,8 +99,9 @@ pub(crate) struct Internal {
     pub(crate) speed: f64,
     pub(crate) sync_av: bool,
 
-    pub(crate) frame: Arc<Mutex<Vec<u8>>>,
+    pub(crate) frame: Arc<Mutex<Frame>>,
     pub(crate) upload_frame: Arc<AtomicBool>,
+    pub(crate) redrawing: Arc<AtomicBool>,
     pub(crate) last_frame_time: Arc<Mutex<Instant>>,
     pub(crate) looping: bool,
     pub(crate) is_eos: bool,
@@ -68,6 +111,9 @@ pub(crate) struct Internal {
 
     pub(crate) subtitle_text: Arc<Mutex<Option<String>>>,
     pub(crate) upload_text: Arc<AtomicBool>,
+
+    #[cfg(not(feature = "wgpu"))]
+    pub(crate) handle_opt: Option<img::Handle>,
 }
 
 impl Internal {
@@ -200,7 +246,10 @@ impl Video {
     pub fn new(uri: &url::Url) -> Result<Self, Error> {
         gst::init()?;
 
-        let pipeline = format!("playbin uri=\"{}\" text-sink=\"appsink name=iced_text sync=true caps=text/x-raw\" video-sink=\"videoscale ! videoconvert ! appsink name=iced_video drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"", uri.as_str());
+        let pipeline = format!(
+            "playbin uri=\"{}\" text-sink=\"appsink name=iced_text sync=true caps=text/x-raw\" video-sink=\"videoscale ! videoconvert ! appsink name=iced_video drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\"",
+            uri.as_str()
+        );
         let pipeline = gst::parse::launch(pipeline.as_ref())?
             .downcast::<gst::Pipeline>()
             .map_err(|_| Error::Cast)?;
@@ -217,7 +266,6 @@ impl Video {
         let video_sink = video_sink.downcast::<gst_app::AppSink>().unwrap();
 
         let text_sink: gst::Element = pipeline.property("text-sink");
-        //let pad = text_sink.pads().get(0).cloned().unwrap();
         let text_sink = text_sink.downcast::<gst_app::AppSink>().unwrap();
 
         Self::from_gst_pipeline(pipeline, video_sink, Some(text_sink))
@@ -249,22 +297,24 @@ impl Video {
 
         // extract resolution and framerate
         // TODO(jazzfool): maybe we want to extract some other information too?
-        let caps = pad.current_caps().ok_or(Error::Caps)?;
-        let s = caps.structure(0).ok_or(Error::Caps)?;
-        let width = s.get::<i32>("width").map_err(|_| Error::Caps)?;
-        let height = s.get::<i32>("height").map_err(|_| Error::Caps)?;
-        // resolution should be mod4
-        let width = ((width + 4 - 1) / 4) * 4;
-        let framerate = s
-            .get::<gst::Fraction>("framerate")
-            .map_err(|_| Error::Caps)?;
-        let framerate = framerate.numer() as f64 / framerate.denom() as f64;
+        let (width, height, framerate, has_video) = if let Some(caps) = pad.current_caps() {
+            let s = caps.structure(0).ok_or(Error::Caps)?;
+            let width = s.get::<i32>("width").map_err(|_| Error::Caps)?;
+            let height = s.get::<i32>("height").map_err(|_| Error::Caps)?;
+            // resolution should be mod4
+            let width = ((width + 4 - 1) / 4) * 4;
+            let framerate = s
+                .get::<gst::Fraction>("framerate")
+                .map_err(|_| Error::Caps)?;
+            let framerate = framerate.numer() as f64 / framerate.denom() as f64;
+            (width, height, framerate, true)
+        } else {
+            log::warn!("Video caps not found, falling back to audio only");
+            (0, 0, 4.0, false)
+        };
 
-        if framerate.is_nan()
-            || framerate.is_infinite()
-            || framerate < 0.0
-            || framerate.abs() < f64::EPSILON
-        {
+        // GStreamer uses 0/1 to represent variable or unknown framerates.
+        if !is_valid_framerate(framerate) {
             return Err(Error::Framerate(framerate));
         }
 
@@ -275,14 +325,10 @@ impl Video {
                 .unwrap_or(0),
         );
 
-        let sync_av = pipeline.has_property("av-offset", None);
+        let sync_av = pipeline.has_property("av-offset");
 
         // NV12 = 12bpp
-        let frame = Arc::new(Mutex::new(vec![
-            0u8;
-            (width as usize * height as usize * 3)
-                .div_ceil(2)
-        ]));
+        let frame = Arc::new(Mutex::new(Frame::new()));
         let upload_frame = Arc::new(AtomicBool::new(false));
         let alive = Arc::new(AtomicBool::new(true));
         let last_frame_time = Arc::new(Mutex::new(Instant::now()));
@@ -303,7 +349,7 @@ impl Video {
             let mut clear_subtitles_at = None;
 
             while alive_ref.load(Ordering::Acquire) {
-                if let Err(gst::FlowError::Error) = (|| -> Result<(), gst::FlowError> {
+                match (|| -> Result<(), gst::FlowError> {
                     let sample =
                         if pipeline_ref.state(gst::ClockTime::ZERO).1 != gst::State::Playing {
                             video_sink
@@ -321,11 +367,11 @@ impl Video {
 
                     let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                     let pts = buffer.pts().unwrap_or_default();
-                    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-
-                    let mut frame = frame_ref.lock().map_err(|_| gst::FlowError::Error)?;
-                    let frame_len = frame.len();
-                    frame.copy_from_slice(&map.as_slice()[..frame_len]);
+                    {
+                        let mut frame_guard =
+                            frame_ref.lock().map_err(|_| gst::FlowError::Error)?;
+                        *frame_guard = Frame(sample);
+                    }
 
                     upload_frame_ref.swap(true, Ordering::SeqCst);
 
@@ -363,7 +409,17 @@ impl Video {
 
                     Ok(())
                 })() {
-                    log::error!("error pulling frame");
+                    Ok(()) => {}
+                    Err(gst::FlowError::Eos) => {
+                        if !has_video {
+                            // Simulate frame upload when there is no video stream
+                            upload_frame_ref.swap(true, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_secs_f64(1.0 / framerate));
+                        }
+                    }
+                    Err(err) => {
+                        log::error!("error pulling frame: {err}");
+                    }
                 }
             }
         });
@@ -376,6 +432,7 @@ impl Video {
             alive,
             worker: Some(worker),
 
+            has_video,
             width,
             height,
             framerate,
@@ -385,6 +442,7 @@ impl Video {
 
             frame,
             upload_frame,
+            redrawing: Arc::new(AtomicBool::new(false)),
             last_frame_time,
             looping: false,
             is_eos: false,
@@ -394,6 +452,9 @@ impl Video {
 
             subtitle_text,
             upload_text,
+
+            #[cfg(not(feature = "wgpu"))]
+            handle_opt: None,
         })))
     }
 
@@ -409,12 +470,18 @@ impl Video {
         self.0.get_mut().expect("lock")
     }
 
+    pub fn has_video(&self) -> bool {
+        self.read().has_video
+    }
+
     /// Get the size/resolution of the video as `(width, height)`.
     pub fn size(&self) -> (i32, i32) {
         (self.read().width, self.read().height)
     }
 
     /// Get the framerate of the video as frames per second.
+    ///
+    /// Returns `0.0` when GStreamer reports a variable or unknown framerate.
     pub fn framerate(&self) -> f64 {
         self.read().framerate
     }
@@ -555,19 +622,19 @@ impl Video {
                 .into_iter()
                 .map(|pos| {
                     inner.seek(pos, true)?;
+
                     inner.upload_frame.store(false, Ordering::SeqCst);
+
                     while !inner.upload_frame.load(Ordering::SeqCst) {
                         std::hint::spin_loop();
                     }
+                    let frame_guard = inner.frame.lock().map_err(|_| Error::Lock)?;
+                    let frame = frame_guard.readable().ok_or(Error::Lock)?;
+
                     Ok(img::Handle::from_rgba(
                         inner.width as u32 / downscale,
                         inner.height as u32 / downscale,
-                        yuv_to_rgba(
-                            &inner.frame.lock().map_err(|_| Error::Lock)?,
-                            width as _,
-                            height as _,
-                            downscale,
-                        ),
+                        yuv_to_rgba(frame.as_slice(), width as _, height as _, downscale),
                     ))
                 })
                 .collect()
@@ -581,7 +648,7 @@ impl Video {
     }
 }
 
-fn yuv_to_rgba(yuv: &[u8], width: u32, height: u32, downscale: u32) -> Vec<u8> {
+pub(crate) fn yuv_to_rgba(yuv: &[u8], width: u32, height: u32, downscale: u32) -> Vec<u8> {
     let uv_start = width * height;
     let mut rgba = vec![];
 
